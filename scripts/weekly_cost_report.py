@@ -15,7 +15,7 @@ from urllib.error import URLError
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from cost_ledger import append_week, last_n_weeks, week_key
+from cost_ledger import append_week, last_n_weeks, week_key, send_telegram
 
 OPENCLAW_DIR = os.path.expanduser("~/.openclaw")
 CONFIG_PATH  = os.path.join(OPENCLAW_DIR, "openclaw.json")
@@ -229,4 +229,8 @@ if __name__ == "__main__":
         "tavily":    tavily    if tavily.get("ok")    else None,
     })
 
-    print(build_report(anthropic, firecrawl, tavily, history))
+    report = build_report(anthropic, firecrawl, tavily, history)
+    # Post directly to Telegram — no LLM relay needed
+    if not send_telegram(report):
+        # send_telegram already prints to stdout as fallback
+        pass

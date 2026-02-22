@@ -9,7 +9,7 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from cost_ledger import load_ledger
+from cost_ledger import load_ledger, send_telegram
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -152,6 +152,10 @@ if __name__ == "__main__":
     ledger = load_ledger()
 
     if not ledger:
-        print("📊 *Monthly Cost Report*\n\n_No data in ledger yet. Weekly reports will build this up over time._")
+        report = "📊 *Monthly Cost Report*\n\n_No data in ledger yet. Weekly reports will build this up over time._"
     else:
-        print(build_report(ledger))
+        report = build_report(ledger)
+
+    # Post directly to Telegram — no LLM relay needed
+    if not send_telegram(report):
+        pass  # send_telegram already prints to stdout as fallback

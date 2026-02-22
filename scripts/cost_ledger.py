@@ -1,12 +1,17 @@
 """
 cost_ledger.py — Shared ledger read/write module.
 Stores weekly cost snapshots as JSONL. One entry per week.
+Also provides Telegram delivery so cron scripts can post directly
+without routing through an LLM agent (zero model cost).
 """
 
 import json
 import os
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
+from urllib.request import urlopen, Request
+from urllib.error import URLError
+from urllib.parse import urlencode
 
 LEDGER_PATH = Path(os.path.expanduser("~/.openclaw/workspace/data/cost_ledger.jsonl"))
 
@@ -86,3 +91,65 @@ def current_month_entries() -> list[dict]:
             pass
     result.sort(key=lambda e: e.get("week_key", ""))
     return result
+
+
+# ── Telegram delivery ─────────────────────────────────────────────────────────
+
+OPENCLAW_CONFIG = Path(os.path.expanduser("~/.openclaw/openclaw.json"))
+
+
+def _get_telegram_config() -> tuple[str, str] | tuple[None, None]:
+    """Return (bot_token, chat_id) from OpenClaw config, or (None, None)."""
+    try:
+        with open(OPENCLAW_CONFIG) as f:
+            cfg = json.load(f)
+        accounts = cfg.get("channels", {}).get("telegram", {}).get("accounts", {})
+        token = next(iter(accounts.values()), {}).get("botToken")
+        # Derive chat_id from the first Telegram channel entry
+        channels_cfg = cfg.get("channels", {}).get("telegram", {})
+        chat_id = channels_cfg.get("defaultChatId") or None
+        # Fallback: check agents for delivery targets
+        if not chat_id:
+            jobs_path = Path(os.path.expanduser("~/.openclaw/cron/jobs.json"))
+            if jobs_path.exists():
+                with open(jobs_path) as f:
+                    jobs = json.load(f)
+                for job in jobs.get("jobs", []):
+                    to = job.get("delivery", {}).get("to")
+                    if to:
+                        chat_id = str(to)
+                        break
+        return token, chat_id
+    except Exception:
+        return None, None
+
+
+def send_telegram(text: str, chat_id: str = None, parse_mode: str = "Markdown") -> bool:
+    """
+    Send a message directly via Telegram Bot API.
+    Returns True on success. Falls back to stdout if config not available.
+    """
+    token, default_chat = _get_telegram_config()
+    target = chat_id or default_chat
+
+    if not token or not target:
+        print("[telegram] No bot token or chat_id found — printing to stdout instead:")
+        print(text)
+        return False
+
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    payload = json.dumps({
+        "chat_id": target,
+        "text": text,
+        "parse_mode": parse_mode,
+    }).encode()
+
+    req = Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
+    try:
+        with urlopen(req, timeout=15) as r:
+            result = json.loads(r.read())
+            return result.get("ok", False)
+    except Exception as e:
+        print(f"[telegram] Send failed: {e}")
+        print(text)
+        return False
